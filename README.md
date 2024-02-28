@@ -152,3 +152,6 @@ sed -i 's/Welcome!/You have been Hacked!/g' showcase.jsp
 cat showcase.jsp
 ```
 
+### Identifying the intrusion in ACS
+
+In Central, 
