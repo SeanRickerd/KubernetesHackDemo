@@ -154,4 +154,10 @@ cat showcase.jsp
 
 ### Identifying the intrusion in ACS
 
-In Central, 
+In Central, click "Violations". 
+
+![Alt text](Images/01.png)
+
+You should be able to see "Shell Spawned by Java Application". This is the exploit and we can identify the vulnerable container by looking under the Entity column. The guilty party is "web" that is located in the default namespace. 
+
+Under "Platform Configuration" in the left-hand menu, click on "Policy Management". In the search bar, search for Policy, then Shell. You should see "Shell Spawned by Java Application". Click the 3 dots on the right and select 
