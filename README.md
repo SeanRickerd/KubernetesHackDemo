@@ -4,6 +4,11 @@
 
 Exploiting the Apache Struts 2 Java web framework CVE.
 
+### OpenShift DOES NOT allow privileged containers by default. You will need to run this command to allow the vulnerable container to run
+```bash
+oc adm policy add-scc-to-group anyuid system:authenticated
+```
+
 ### Setup Vulnerable Target Container
 
 Deploy Pod with vulnerable version:
